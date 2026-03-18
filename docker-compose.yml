@@ -1,0 +1,15 @@
+version: "3.8"
+services:
+  vtp-screener:
+    build: .
+    container_name: vtp-screener
+    restart: unless-stopped
+    ports:
+      - "8092:8092"
+    volumes:
+      - ./data:/data
+      - ./logs:/logs
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Seoul

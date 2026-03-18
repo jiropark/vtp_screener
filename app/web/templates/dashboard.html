@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}대시보드{% endblock %}
+
+{% block content %}
+<h1>포트폴리오 현황</h1>
+
+<!-- 요약 카드 -->
+<div class="card-grid">
+    <div class="card">
+        <div class="card-label">총자산</div>
+        <div class="card-value">{{ "{:,.0f}".format(summary.total_asset) }}원</div>
+    </div>
+    <div class="card">
+        <div class="card-label">수익률</div>
+        <div class="card-value {{ 'profit' if summary.return_pct >= 0 else 'loss' }}">
+            {{ "{:+.2f}".format(summary.return_pct) }}%
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-label">현금</div>
+        <div class="card-value">{{ "{:,.0f}".format(summary.cash) }}원</div>
+    </div>
+    <div class="card">
+        <div class="card-label">보유종목</div>
+        <div class="card-value">{{ summary.position_count }}개</div>
+    </div>
+    <div class="card">
+        <div class="card-label">일일손익</div>
+        <div class="card-value {{ 'profit' if daily_pnl >= 0 else 'loss' }}">
+            {{ "{:+,.0f}".format(daily_pnl) }}원
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-label">리스크 상태</div>
+        <div class="card-value">
+            {% if risk.get('cooldown_until') %}
+                <span class="loss">쿨다운</span>
+            {% elif (risk.get('daily_loss_pct') or 0) < -1.5 %}
+                <span class="loss">주의</span>
+            {% else %}
+                <span class="profit">정상</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- 전략 규칙 요약 -->
+<div class="section">
+    <h2>전략 규칙</h2>
+    <div class="card-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+        <div class="card" style="text-align: left; padding: 0.8rem 1rem;">
+            <div class="card-label">진입컷오프</div>
+            <div style="color: #4dabf7; font-weight: bold;">60점 이상</div>
+        </div>
+        <div class="card" style="text-align: left; padding: 0.8rem 1rem;">
+            <div class="card-label">ATR 손절 배수</div>
+            <div style="color: #4dabf7; font-weight: bold;">1.2x</div>
+        </div>
+        <div class="card" style="text-align: left; padding: 0.8rem 1rem;">
+            <div class="card-label">갭기준 (일반/풀백)</div>
+            <div style="color: #4dabf7; font-weight: bold;">0.8x / 1.5x ATR</div>
+        </div>
+        <div class="card" style="text-align: left; padding: 0.8rem 1rem;">
+            <div class="card-label">최대 보유일</div>
+            <div style="color: #4dabf7; font-weight: bold;">3일</div>
+        </div>
+        <div class="card" style="text-align: left; padding: 0.8rem 1rem;">
+            <div class="card-label">일일/주간 한도</div>
+            <div style="color: #4dabf7; font-weight: bold;">-2% / -5%</div>
+        </div>
+        <div class="card" style="text-align: left; padding: 0.8rem 1rem;">
+            <div class="card-label">최대 포지션</div>
+            <div style="color: #4dabf7; font-weight: bold;">5종목</div>
+        </div>
+    </div>
+</div>
+
+<!-- 보유 포지션 -->
+<div class="section">
+    <h2>보유 포지션</h2>
+    {% if summary.positions %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>종목</th>
+                    <th>매수가</th>
+                    <th>수량</th>
+                    <th>평가금액</th>
+                    <th>ATR</th>
+                    <th>진입점수</th>
+                    <th>진입일</th>
+                    <th>분할매도</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in summary.positions %}
+                <tr>
+                    <td>
+                        <strong>{{ p.name }}</strong>
+                        <br><span style="color: #888; font-size: 0.8em;">{{ p.code }}</span>
+                    </td>
+                    <td>{{ "{:,.0f}".format(p.buy_price) }}</td>
+                    <td>{{ "{:,}".format(p.quantity) }} / {{ "{:,}".format(p.original_quantity) }}</td>
+                    <td>{{ "{:,.0f}".format(p.buy_price * p.quantity) }}</td>
+                    <td>{{ "%.1f"|format(p.atr_at_entry) }}</td>
+                    <td>
+                        <span class="badge {% if p.entry_score >= 80 %}badge-positive{% elif p.entry_score >= 60 %}badge-neutral{% else %}badge-negative{% endif %}">
+                            {{ "%.0f"|format(p.entry_score) }}
+                        </span>
+                    </td>
+                    <td>{{ p.entry_date }}</td>
+                    <td>{{ p.partial_sold }}회</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-msg">보유 포지션 없음</p>
+    {% endif %}
+</div>
+
+<!-- 최근 시그널 -->
+<div class="section">
+    <h2>최근 시그널 (Top 5)</h2>
+    {% if signals %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>시간</th>
+                    <th>종목</th>
+                    <th>총점</th>
+                    <th>거래량점수</th>
+                    <th>가격점수</th>
+                    <th>상태</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in signals %}
+                <tr>
+                    <td>{{ s.timestamp }}</td>
+                    <td><strong>{{ s.name }}</strong> <span style="color: #888;">({{ s.code }})</span></td>
+                    <td>
+                        <span class="badge {% if s.score >= 80 %}badge-positive{% elif s.score >= 60 %}badge-neutral{% else %}badge-negative{% endif %}">
+                            {{ "%.0f"|format(s.score) }}
+                        </span>
+                    </td>
+                    <td>{{ "%.1f"|format(s.volume_score) }}</td>
+                    <td>{{ "%.1f"|format(s.price_score) }}</td>
+                    <td>
+                        <span class="badge {% if s.status == 'BOUGHT' %}badge-buy{% elif s.status == 'EXPIRED' %}badge-negative{% else %}badge-neutral{% endif %}">
+                            {{ s.status }}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-msg">시그널 없음</p>
+    {% endif %}
+</div>
+
+<!-- 차트 영역 -->
+<div class="section">
+    <h2>자산 추이</h2>
+    <div class="chart-container">
+        <canvas id="assetChart" height="100"></canvas>
+    </div>
+</div>
+
+<div class="section">
+    <h2>자산 배분</h2>
+    <div style="max-width: 300px; margin: 0 auto;">
+        <canvas id="allocationChart" height="200"></canvas>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 자산 추이 차트
+fetch('/api/performance')
+    .then(r => r.json())
+    .then(data => {
+        if (data.error || !data.dates || data.dates.length === 0) return;
+        const ctx = document.getElementById('assetChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.dates,
+                datasets: [{
+                    label: '총자산',
+                    data: data.total_assets,
+                    borderColor: '#4dabf7',
+                    backgroundColor: 'rgba(77,171,247,0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { labels: { color: '#aaa' } },
+                },
+                scales: {
+                    x: { ticks: { color: '#888' }, grid: { color: '#1a1a2e' } },
+                    y: {
+                        ticks: {
+                            color: '#888',
+                            callback: v => (v / 10000).toFixed(0) + '만'
+                        },
+                        grid: { color: 'rgba(255,255,255,0.05)' }
+                    },
+                },
+            },
+        });
+    });
+
+// 자산 배분 도넛 차트
+const cash = {{ summary.cash }};
+const stockVal = {{ summary.stock_value }};
+if (cash > 0 || stockVal > 0) {
+    const ctx2 = document.getElementById('allocationChart').getContext('2d');
+    new Chart(ctx2, {
+        type: 'doughnut',
+        data: {
+            labels: ['현금', '주식'],
+            datasets: [{
+                data: [cash, stockVal],
+                backgroundColor: ['#4dabf7', '#51cf66'],
+                borderColor: ['#1a1a2e', '#1a1a2e'],
+                borderWidth: 2,
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { labels: { color: '#aaa' } },
+            },
+        },
+    });
+}
+</script>
+{% endblock %}

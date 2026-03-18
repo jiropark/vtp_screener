@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}설정{% endblock %}
+
+{% block content %}
+<h1>파라미터 튜닝</h1>
+<p style="color: #888; margin-bottom: 1.5rem;">전략 파라미터를 런타임에 변경합니다. DB에 저장되어 재시작 후에도 유지됩니다.</p>
+
+{% for group_name, params in param_groups.items() %}
+<div class="section">
+    <h2>{{ group_name }}</h2>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>파라미터</th>
+                    <th>설명</th>
+                    <th>현재값</th>
+                    <th>변경</th>
+                    <th>마지막 수정</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for param_name, description, current_value in params %}
+                <tr>
+                    <td><code style="color: #4dabf7;">{{ param_name }}</code></td>
+                    <td>{{ description }}</td>
+                    <td>
+                        <strong>{{ current_value }}</strong>
+                        {% if param_name in dynamic %}
+                        <span style="color: #51cf66; font-size: 0.75rem;">(오버라이드)</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div style="display: flex; gap: 0.4rem; align-items: center;">
+                            <input type="text" id="input-{{ param_name }}" value="{{ current_value }}"
+                                   style="background: #0f0f1a; color: #e0e0e0; border: 1px solid #333;
+                                          padding: 0.3rem 0.5rem; border-radius: 4px; width: 120px;">
+                            <button class="btn-primary btn-sm" onclick="saveSetting('{{ param_name }}')">저장</button>
+                        </div>
+                    </td>
+                    <td style="color: #888; font-size: 0.8rem;">
+                        {% if param_name in dynamic %}
+                            {{ dynamic[param_name].updated_at }}
+                        {% else %}
+                            기본값
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+
+<div id="toast" style="display:none; position:fixed; bottom:2rem; right:2rem; background:#51cf66;
+     color:#000; padding:0.8rem 1.5rem; border-radius:8px; font-weight:bold; z-index:999;"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function saveSetting(paramName) {
+    const input = document.getElementById('input-' + paramName);
+    const value = input.value.trim();
+    if (!value) return;
+
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ param_name: paramName, param_value: value }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.ok) {
+            showToast(paramName + ' = ' + value + ' 저장 완료');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast('오류: ' + (data.error || '알 수 없음'), true);
+        }
+    })
+    .catch(err => showToast('네트워크 오류', true));
+}
+
+function showToast(msg, isError) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.background = isError ? '#ff6b6b' : '#51cf66';
+    toast.style.display = 'block';
+    setTimeout(() => toast.style.display = 'none', 2500);
+}
+</script>
+{% endblock %}

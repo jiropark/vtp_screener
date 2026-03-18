@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}매매내역{% endblock %}
+
+{% block content %}
+<h1>매매 내역</h1>
+
+<!-- 매매 통계 카드 -->
+<div class="card-grid">
+    <div class="card">
+        <div class="card-label">총 거래</div>
+        <div class="card-value">{{ stats.total }}건</div>
+    </div>
+    <div class="card">
+        <div class="card-label">승률</div>
+        <div class="card-value {{ 'profit' if stats.win_rate >= 50 else 'loss' }}">
+            {{ stats.win_rate }}%
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-label">평균수익</div>
+        <div class="card-value profit">{{ "{:+,.0f}".format(stats.avg_win) }}원</div>
+    </div>
+    <div class="card">
+        <div class="card-label">평균손실</div>
+        <div class="card-value loss">{{ "{:,.0f}".format(stats.avg_loss) }}원</div>
+    </div>
+    <div class="card">
+        <div class="card-label">손익비</div>
+        <div class="card-value" style="color: #4dabf7;">{{ stats.profit_factor }}</div>
+    </div>
+    <div class="card">
+        <div class="card-label">승/패</div>
+        <div class="card-value">
+            <span class="profit">{{ stats.wins }}</span> /
+            <span class="loss">{{ stats.losses }}</span>
+        </div>
+    </div>
+</div>
+
+<!-- 거래 테이블 -->
+<div class="section">
+    {% if trades %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>시간</th>
+                    <th>종목</th>
+                    <th>구분</th>
+                    <th>가격</th>
+                    <th>수량</th>
+                    <th>금액</th>
+                    <th>수수료</th>
+                    <th>사유</th>
+                    <th>점수</th>
+                    <th>손익</th>
+                    <th>수익률</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in trades %}
+                <tr>
+                    <td style="white-space: nowrap;">{{ t.created_at }}</td>
+                    <td>
+                        <strong>{{ t.name }}</strong>
+                        <br><span style="color: #888; font-size: 0.8em;">{{ t.code }}</span>
+                    </td>
+                    <td>
+                        {% if t.side == 'BUY' %}
+                        <span class="badge badge-buy">매수</span>
+                        {% else %}
+                        <span class="badge {% if (t.pnl or 0) >= 0 %}badge-positive{% else %}badge-negative{% endif %}">매도</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ "{:,.0f}".format(t.price) }}</td>
+                    <td>{{ "{:,}".format(t.quantity) }}</td>
+                    <td>{{ "{:,.0f}".format(t.amount) }}</td>
+                    <td>{{ "{:,.0f}".format((t.fee or 0) + (t.tax or 0)) }}</td>
+                    <td class="reason-cell" title="{{ t.reason or '' }}">{{ t.reason or '-' }}</td>
+                    <td>
+                        {% if t.score %}
+                        <span class="badge {% if t.score >= 80 %}badge-positive{% elif t.score >= 60 %}badge-neutral{% else %}badge-negative{% endif %}">
+                            {{ "%.0f"|format(t.score) }}
+                        </span>
+                        {% else %}-{% endif %}
+                    </td>
+                    <td>
+                        {% if t.side == 'SELL' %}
+                        <span class="{{ 'profit' if (t.pnl or 0) >= 0 else 'loss' }}">
+                            {{ "{:+,.0f}".format(t.pnl or 0) }}
+                        </span>
+                        {% else %}-{% endif %}
+                    </td>
+                    <td>
+                        {% if t.side == 'SELL' %}
+                        <span class="{{ 'profit' if (t.pnl_pct or 0) >= 0 else 'loss' }}">
+                            {{ "{:+.2f}".format(t.pnl_pct or 0) }}%
+                        </span>
+                        {% else %}-{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-msg">거래 내역 없음</p>
+    {% endif %}
+</div>
+{% endblock %}
