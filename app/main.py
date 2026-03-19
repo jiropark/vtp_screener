@@ -87,8 +87,9 @@ def run_signal_screening():
         from app.screener.scorer import score_stock
         from app.storage.db import save_signal, save_score_history
         from app.notifier import notify_signal
-        from app.config import get_param
+        from app.config import get_param, load_dynamic_config
 
+        load_dynamic_config()  # 동적 설정 리로드
         threshold = get_param("SCORE_THRESHOLD", 60)
         universe = _universe_cache
 

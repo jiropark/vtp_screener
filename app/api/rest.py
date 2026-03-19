@@ -135,7 +135,7 @@ def get_current_price(code: str) -> dict:
 def get_daily_ohlcv(code: str, days: int = 60) -> list[dict]:
     """일봉 차트 데이터 조회.
 
-    KIS API는 한 번에 최대 100건을 반환한다.
+    KIS API 시도 → 실패 시 네이버 금융 폴백.
     날짜 역순(최신→과거)으로 반환.
 
     Returns:
@@ -160,29 +160,87 @@ def get_daily_ohlcv(code: str, days: int = 60) -> list[dict]:
             "FID_ORG_ADJ_PRC": "0",  # 수정주가
         },
     )
-    if not data:
+
+    output2 = data.get("output2", []) if data else []
+
+    if output2:
+        result = []
+        for item in output2[:days]:
+            try:
+                result.append({
+                    "date": item.get("stck_bsop_date", ""),
+                    "open": int(item.get("stck_oprc", 0)),
+                    "high": int(item.get("stck_hgpr", 0)),
+                    "low": int(item.get("stck_lwpr", 0)),
+                    "close": int(item.get("stck_clpr", 0)),
+                    "volume": int(item.get("acml_vol", 0)),
+                    "trade_amount": int(item.get("acml_tr_pbmn", 0)),
+                })
+            except (ValueError, TypeError):
+                continue
+        if result:
+            return result
+
+    # KIS 실패 시 네이버 금융 폴백
+    return _get_daily_ohlcv_naver(code, days)
+
+
+def _get_daily_ohlcv_naver(code: str, days: int = 60) -> list[dict]:
+    """네이버 금융 일봉 데이터 폴백 (모의투자 차트 API 미지원 대응)."""
+    import json
+    import re
+
+    end_date = datetime.now().strftime("%Y%m%d")
+    start_date = (datetime.now() - timedelta(days=days + 30)).strftime("%Y%m%d")
+
+    try:
+        resp = requests.get(
+            "https://fchart.stock.naver.com/siseJson.nhn",
+            params={
+                "symbol": code,
+                "requestType": "1",
+                "startTime": start_date,
+                "endTime": end_date,
+                "timeframe": "day",
+            },
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+
+        # 응답은 JavaScript 배열 형식 → JSON 파싱
+        text = resp.text.strip()
+        # 헤더 행 제거 후 파싱
+        text = re.sub(r"'", '"', text)  # 작은따옴표 → 큰따옴표
+        rows = json.loads(text)
+
+        result = []
+        for row in rows[1:]:  # 첫 행은 헤더
+            if len(row) < 6:
+                continue
+            try:
+                close_price = int(row[4])
+                vol = int(row[5])
+                result.append({
+                    "date": str(row[0]).strip().strip('"'),
+                    "open": int(row[1]),
+                    "high": int(row[2]),
+                    "low": int(row[3]),
+                    "close": close_price,
+                    "volume": vol,
+                    "trade_amount": close_price * vol,  # 근사값
+                })
+            except (ValueError, TypeError, IndexError):
+                continue
+
+        # 최신→과거 순 (KIS와 동일)
+        result.reverse()
+        logger.debug("네이버 일봉 %s: %d일", code, len(result))
+        return result[:days]
+
+    except Exception as exc:
+        logger.warning("네이버 일봉 조회 실패 [%s]: %s", code, exc)
         return []
-
-    output2 = data.get("output2", [])
-    if not output2:
-        return []
-
-    result = []
-    for item in output2[:days]:
-        try:
-            result.append({
-                "date": item.get("stck_bsop_date", ""),
-                "open": int(item.get("stck_oprc", 0)),
-                "high": int(item.get("stck_hgpr", 0)),
-                "low": int(item.get("stck_lwpr", 0)),
-                "close": int(item.get("stck_clpr", 0)),
-                "volume": int(item.get("acml_vol", 0)),
-                "trade_amount": int(item.get("acml_tr_pbmn", 0)),
-            })
-        except (ValueError, TypeError):
-            continue
-
-    return result
 
 
 # ══════════════════════════════════════════════════════════
@@ -359,10 +417,12 @@ def _get_volume_rank_naver() -> list[dict]:
     result = []
     headers = {"User-Agent": "Mozilla/5.0"}
 
+    # 네이버 모바일 API에 거래량 전용 엔드포인트 없음
+    # /up/ (상승률) 종목을 유니버스로 사용 → scorer가 거래량 기반 추가 필터링
     for market in ("KOSPI", "KOSDAQ"):
         try:
             resp = requests.get(
-                f"https://m.stock.naver.com/api/stocks/volume/{market}",
+                f"https://m.stock.naver.com/api/stocks/up/{market}",
                 params={"page": "1", "pageSize": "50"},
                 headers=headers,
                 timeout=10,
@@ -370,7 +430,7 @@ def _get_volume_rank_naver() -> list[dict]:
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
-            logger.warning("네이버 %s 거래량 순위 조회 실패: %s", market, exc)
+            logger.warning("네이버 %s 상승 종목 조회 실패: %s", market, exc)
             continue
 
         for item in data.get("stocks", []):
