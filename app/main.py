@@ -640,6 +640,23 @@ def main():
     for job in scheduler.get_jobs():
         logger.info("등록된 작업: %s / 트리거: %s", job.name, job.trigger)
 
+    # 시작 시 놓친 스크리닝 보충 실행 (평일, 08:52~15:19 사이 시작 시)
+    now = datetime.now()
+    if now.weekday() < 5 and dt_time(8, 52) < now.time() < dt_time(15, 20):
+        logger.info("── 놓친 스크리닝 보충 실행 시작 ──")
+
+        def _catchup():
+            import time as _time
+            _time.sleep(3)  # Flask 초기화 대기
+            run_universe_filter()
+            run_signal_screening()
+            if dt_time(9, 0) <= datetime.now().time() <= dt_time(15, 20):
+                run_entry_check()
+            logger.info("── 놓친 스크리닝 보충 실행 완료 ──")
+
+        catchup_thread = threading.Thread(target=_catchup, daemon=True)
+        catchup_thread.start()
+
     # 종료 시그널 처리
     def shutdown(signum, frame):
         logger.info("종료 시그널 수신 (signal=%s), 스케줄러 중지...", signum)
