@@ -226,13 +226,17 @@ def run_entry_check():
             else:
                 atr = current_price * 0.02  # fallback: 2%
 
-            # VWAP (일봉 근사)
-            vwap = calc_vwap([{
-                "high": cur.get("high", current_price),
-                "low": cur.get("low", current_price),
-                "close": current_price,
-                "volume": cur.get("volume", 1),
-            }])
+            # VWAP (전일 일봉 기반 — 당일 데이터로 계산 시 현재가와 동일해짐)
+            if ohlcv and len(ohlcv) >= 2:
+                prev_bar = ohlcv[-2]  # 전일 봉
+                vwap = calc_vwap([{
+                    "high": prev_bar.get("high", prev_close),
+                    "low": prev_bar.get("low", prev_close),
+                    "close": prev_bar.get("close", prev_close),
+                    "volume": prev_bar.get("volume", 1),
+                }])
+            else:
+                vwap = float(prev_close) if prev_close > 0 else float(current_price)
 
             # 갭 시나리오 판단
             entry_result = evaluate_entry(
@@ -286,8 +290,80 @@ def run_entry_check():
         logger.exception("진입 체크 중 예외 발생")
 
 
+def _check_vwap_pullback_signals():
+    """시나리오 B (VWAP 풀백 대기) 시그널 재체크 — 1분 모니터링에서 호출."""
+    try:
+        from app.storage.db import get_today_signals, update_signal_status
+        from app.api.rest import get_current_price, get_daily_ohlcv
+        from app.screener.indicators import calc_vwap
+        from app.strategy.portfolio import Portfolio
+        from app.strategy.risk import RiskManager
+        from app.config import POSITION_SIZE
+
+        risk = RiskManager.instance()
+        if not risk.is_trading_allowed():
+            return
+
+        portfolio = Portfolio.instance()
+        if not portfolio.can_buy():
+            return
+
+        signals = get_today_signals()
+        # VWAP 대기 중인 시그널 (status가 아직 DETECTED이고 시나리오 B로 판정된 것)
+        pending = [s for s in signals if s.get("status") == "DETECTED"]
+        if not pending:
+            return
+
+        for sig in pending:
+            code = sig["code"]
+            name = sig.get("name", "")
+            score = sig.get("score", 0)
+
+            cur = get_current_price(code)
+            if not cur or cur.get("price", 0) <= 0:
+                continue
+
+            current_price = cur["price"]
+            prev_close = cur.get("prev_close", 0)
+            if prev_close <= 0:
+                continue
+
+            # 전일 VWAP 기준 풀백 체크
+            ohlcv = get_daily_ohlcv(code, days=20)
+            if ohlcv:
+                ohlcv.reverse()
+                if len(ohlcv) >= 2:
+                    prev_bar = ohlcv[-2]
+                    vwap = calc_vwap([{
+                        "high": prev_bar.get("high", prev_close),
+                        "low": prev_bar.get("low", prev_close),
+                        "close": prev_bar.get("close", prev_close),
+                        "volume": prev_bar.get("volume", 1),
+                    }])
+                else:
+                    vwap = float(prev_close)
+            else:
+                continue
+
+            # 현재가가 VWAP 이하로 눌렸으면 매수
+            if vwap > 0 and current_price <= int(vwap):
+                quantity = max(1, POSITION_SIZE // current_price)
+                from app.screener.indicators import calc_atr
+                atr = calc_atr(ohlcv) if ohlcv else current_price * 0.02
+                success = portfolio.buy(code, name, current_price, quantity, score, atr)
+                if success:
+                    update_signal_status(sig["id"], "BOUGHT")
+                    logger.info("[VWAP-PULLBACK] %s %s 눌림 매수 %d주 @ %s원",
+                                code, name, quantity, f"{current_price:,}")
+                    if not portfolio.can_buy():
+                        break
+
+    except Exception:
+        logger.exception("VWAP 풀백 재체크 중 예외 발생")
+
+
 def run_position_monitor():
-    """장중 포지션 모니터링 (손절/익절/시간무효화)."""
+    """장중 포지션 모니터링 (손절/익절/시간무효화) + VWAP 풀백 재체크."""
     try:
         if not is_market_open():
             return
@@ -298,6 +374,9 @@ def run_position_monitor():
         from app.strategy.portfolio import Portfolio
         from app.strategy.risk import RiskManager
         from app.storage.db import update_position
+
+        # 시나리오 B 재체크 (매분 실행)
+        _check_vwap_pullback_signals()
 
         portfolio = Portfolio.instance()
         risk = RiskManager.instance()

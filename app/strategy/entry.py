@@ -76,7 +76,8 @@ def evaluate_entry(
     result["gap_atr_ratio"] = round(gap_atr_ratio, 2)
 
     # ── 시나리오 D: 갭 다운 (음봉) ──
-    if gap < 0:
+    # 0.5% 이상 갭다운만 무효화, 소폭 갭다운(-0.5% 미만)은 시나리오 A로 진행
+    if gap < 0 and abs(gap_pct) >= 0.5:
         result["action"] = "INVALIDATE"
         result["scenario"] = "D"
         result["reason"] = f"갭다운 {gap_pct:+.2f}% → 시그널 무효화"

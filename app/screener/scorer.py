@@ -128,8 +128,13 @@ def score_stock(
     # 종가 퀄리티
     close_quality = calc_close_quality(high, low, close)
 
-    # 20일 고가
-    high_20d = max(d.get("high", 0) for d in ohlcv[-20:]) if len(ohlcv) >= 20 else max(d.get("high", 0) for d in ohlcv)
+    # 20일 고가 (오늘 제외 — 오늘 포함 시 close > high_20d가 불가능)
+    if len(ohlcv) >= 21:
+        high_20d = max(d.get("high", 0) for d in ohlcv[-21:-1])
+    elif len(ohlcv) >= 2:
+        high_20d = max(d.get("high", 0) for d in ohlcv[:-1])
+    else:
+        high_20d = high  # 데이터 1일뿐이면 오늘 고가 사용
 
     # 지표 저장
     indicators = {
@@ -213,15 +218,15 @@ def score_stock(
         foreign_net = today_inv.get("foreign_net", 0)
         inst_net = today_inv.get("inst_net", 0)
 
-        # 외국인 또는 기관 대량 순매수 (금액 기준 상위 5% 판정은 외부에서)
-        # 여기선 양수 여부 + 거래대금 대비 비율로 근사 판정
-        today_amount = today.get("trade_amount", 0)
-        if today_amount > 0:
-            # 순매수 비율 = 순매수금 / 거래대금
-            foreign_ratio = foreign_net / today_amount if foreign_net > 0 else 0
-            inst_ratio = inst_net / today_amount if inst_net > 0 else 0
+        # 외국인 또는 기관 대량 순매수
+        # foreign_net/inst_net은 순매수 수량(주), volume은 거래량(주)
+        today_volume = today.get("volume", 0)
+        if today_volume > 0:
+            # 순매수 비율 = 순매수 수량 / 거래량 (동일 단위: 주)
+            foreign_ratio = foreign_net / today_volume if foreign_net > 0 else 0
+            inst_ratio = inst_net / today_volume if inst_net > 0 else 0
 
-            # 거래대금 대비 5% 이상 순매수 → 대량 순매수로 판정
+            # 거래량 대비 5% 이상 순매수 → 대량 순매수로 판정
             if foreign_ratio >= 0.05 or inst_ratio >= 0.05:
                 supply_bonus = 10
                 who = []
