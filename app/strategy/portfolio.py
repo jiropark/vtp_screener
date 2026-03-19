@@ -204,7 +204,7 @@ class Portfolio:
 
         try:
             from app.notifier import notify_buy
-            notify_buy(code, name, price, quantity, amount, score=score)
+            notify_buy(code, name, price, quantity, score=score)
         except Exception:
             logger.debug("매수 알림 전송 실패")
 
@@ -323,7 +323,7 @@ class Portfolio:
         try:
             from app.notifier import notify_sell
             notify_sell(code, name, price, sell_qty,
-                        round(profit_pct, 2), profit_amount, reason=reason)
+                        pnl_pct=round(profit_pct, 2), reason=reason)
         except Exception:
             logger.debug("매도 알림 전송 실패")
 
@@ -354,7 +354,8 @@ class Portfolio:
 
         for pos in self._positions:
             try:
-                cur = get_current_price(pos["code"])
+                data = get_current_price(pos["code"])
+                cur = data.get("price", 0) if data else 0
                 if cur and cur > pos.get("highest_price", 0):
                     pos["highest_price"] = cur
                     db_update_position(pos["code"], highest_price=cur)

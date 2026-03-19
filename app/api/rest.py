@@ -362,7 +362,7 @@ def _get_volume_rank_naver() -> list[dict]:
     for market in ("KOSPI", "KOSDAQ"):
         try:
             resp = requests.get(
-                f"https://m.stock.naver.com/api/stocks/up/{market}",
+                f"https://m.stock.naver.com/api/stocks/volume/{market}",
                 params={"page": "1", "pageSize": "50"},
                 headers=headers,
                 timeout=10,
@@ -370,7 +370,7 @@ def _get_volume_rank_naver() -> list[dict]:
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
-            logger.warning("네이버 %s 상승률 순위 조회 실패: %s", market, exc)
+            logger.warning("네이버 %s 거래량 순위 조회 실패: %s", market, exc)
             continue
 
         for item in data.get("stocks", []):
