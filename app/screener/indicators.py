@@ -6,6 +6,10 @@ VTP 스크리너에서 사용하는 핵심 지표:
   - 볼린저 밴드
   - 거래량 비율 / 추세 / 최대치
   - 종가 퀄리티 (Close Quality)
+  - 선형회귀 R² (순항도)
+  - 이동평균 정배열
+  - 고점 대비 낙폭
+  - ATR 추세 (변동성 축소)
 """
 
 import logging
@@ -264,3 +268,166 @@ def calc_max_volume(trade_amounts: list[float], days: int = 60) -> bool:
         return False
 
     return current > max(past)
+
+
+def calc_linear_regression_r2(closes: list[float], period: int = 20) -> tuple[float, bool]:
+    """선형회귀 R² (결정계수) — 추세 일관성 측정.
+
+    R²가 1에 가까우면 가격이 직선에 가깝게 움직임 (= 순항).
+    R²가 0에 가까우면 방향 없이 랜덤하게 움직임.
+
+    Parameters
+    ----------
+    closes : list[float]
+        종가 리스트 (날짜 오름차순).
+    period : int
+        회귀 계산 기간 (기본 20일).
+
+    Returns
+    -------
+    tuple[float, bool]
+        (r_squared, slope_positive).
+        r_squared: 0.0 ~ 1.0 범위의 결정계수.
+        slope_positive: 기울기가 양수이면 True (상승 추세).
+    """
+    if not closes or len(closes) < period:
+        return (0.0, False)
+
+    recent = closes[-period:]
+    n = len(recent)
+
+    # x = 0, 1, 2, ..., n-1
+    x_mean = (n - 1) / 2
+    y_mean = sum(recent) / n
+
+    ss_xy = sum((i - x_mean) * (y - y_mean) for i, y in enumerate(recent))
+    ss_xx = sum((i - x_mean) ** 2 for i in range(n))
+    ss_yy = sum((y - y_mean) ** 2 for y in recent)
+
+    if ss_xx == 0 or ss_yy == 0:
+        return (0.0, False)
+
+    slope = ss_xy / ss_xx
+    r_squared = (ss_xy ** 2) / (ss_xx * ss_yy)
+
+    return (round(r_squared, 4), slope > 0)
+
+
+def calc_ma_alignment(
+    closes: list[float],
+    short: int = 5,
+    mid: int = 20,
+    long: int = 60,
+) -> dict:
+    """이동평균 정배열 여부 및 현재가 대비 이평선 거리.
+
+    정배열: 현재가 > MA5 > MA20 > MA60
+
+    Parameters
+    ----------
+    closes : list[float]
+        종가 리스트 (날짜 오름차순).
+    short : int
+        단기 이평 기간 (기본 5).
+    mid : int
+        중기 이평 기간 (기본 20).
+    long : int
+        장기 이평 기간 (기본 60).
+
+    Returns
+    -------
+    dict
+        {
+            "ma_short": float, "ma_mid": float, "ma_long": float,
+            "aligned": bool,  # 정배열 여부
+            "dist_to_short_pct": float,  # 현재가와 단기이평 괴리율 (%)
+        }
+    """
+    result = {
+        "ma_short": 0,
+        "ma_mid": 0,
+        "ma_long": 0,
+        "aligned": False,
+        "dist_to_short_pct": 0.0,
+    }
+
+    if not closes or len(closes) < long:
+        return result
+
+    ma_s = sum(closes[-short:]) / short
+    ma_m = sum(closes[-mid:]) / mid
+    ma_l = sum(closes[-long:]) / long
+
+    current = closes[-1]
+
+    result["ma_short"] = round(ma_s, 2)
+    result["ma_mid"] = round(ma_m, 2)
+    result["ma_long"] = round(ma_l, 2)
+    result["aligned"] = current > ma_s > ma_m > ma_l
+    result["dist_to_short_pct"] = round((current - ma_s) / ma_s * 100, 2) if ma_s > 0 else 0.0
+
+    return result
+
+
+def calc_drawdown_from_high(closes: list[float], period: int = 20) -> float:
+    """최근 N일 고점 대비 현재 낙폭 (%).
+
+    0이면 신고가, -5이면 고점 대비 5% 하락.
+
+    Parameters
+    ----------
+    closes : list[float]
+        종가 리스트 (날짜 오름차순).
+    period : int
+        고점 탐색 기간 (기본 20일).
+
+    Returns
+    -------
+    float
+        0 이하의 값 (%). 예: -3.5 → 고점 대비 3.5% 하락.
+    """
+    if not closes or len(closes) < 2:
+        return 0.0
+
+    recent = closes[-period:] if len(closes) >= period else closes
+    peak = max(recent)
+    current = closes[-1]
+
+    if peak <= 0:
+        return 0.0
+
+    return round((current - peak) / peak * 100, 2)
+
+
+def calc_atr_trend(ohlcv_list: list[dict], period: int = 14, lookback: int = 5) -> bool:
+    """ATR이 축소 추세인지 (최근 lookback일).
+
+    변동성 축소 = 안정적 순항 신호.
+    최근 ATR < lookback일 전 ATR이면 True.
+
+    Parameters
+    ----------
+    ohlcv_list : list[dict]
+        OHLCV 데이터 (날짜 오름차순).
+    period : int
+        ATR 기간 (기본 14).
+    lookback : int
+        비교 기간 (기본 5일).
+
+    Returns
+    -------
+    bool
+        True면 ATR 축소 추세 (변동성 감소).
+    """
+    if not ohlcv_list or len(ohlcv_list) < period + lookback:
+        return False
+
+    # 현재 ATR
+    atr_now = calc_atr(ohlcv_list, period)
+    # lookback일 전 ATR
+    atr_before = calc_atr(ohlcv_list[:-lookback], period)
+
+    if atr_before <= 0:
+        return False
+
+    return atr_now < atr_before

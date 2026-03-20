@@ -1,7 +1,7 @@
-"""VTP 스크리너 메인 엔트리포인트.
+"""VTP 스크리너 메인 엔트리포인트 — 목표가 순항 전략.
 
-- 유니버스 필터링: 08:50 (전일 종가 기반)
-- 갭 시나리오 진입: 09:00
+- 유니버스 필터링: 08:50 (목표가 + 시총/거래대금 필터)
+- 눌림목 진입 체크: 09:00
 - 장중 포지션 모니터링: 09:00~15:20, 1분 간격
 - 종가 기반 스크리닝: 15:20
 - 일일 스냅샷: 15:35
@@ -50,11 +50,11 @@ def is_market_open() -> bool:
 # ── 스케줄 작업 ──
 
 def run_universe_filter():
-    """유니버스 필터링 (거래량 상위 → 시가총액/거래대금 필터)."""
+    """유니버스 필터링 (거래량 상위 → 시총/거래대금/목표가 필터)."""
     global _universe_cache
     try:
         logger.info("── 유니버스 필터링 시작 ──")
-        from app.api.rest import get_volume_rank, get_daily_ohlcv
+        from app.api.rest import get_volume_rank, get_daily_ohlcv, get_naver_target_price
         from app.screener.universe import filter_universe
 
         # 1. 거래량 상위 종목 조회 (네이버 API / KIS API)
@@ -66,10 +66,11 @@ def run_universe_filter():
 
         logger.info("거래량 상위 후보: %d종목", len(candidates))
 
-        # 2. 유니버스 필터 (시총, 거래대금, 관리종목 등)
+        # 2. 유니버스 필터 (시총, 거래대금, 관리종목, 목표가 등)
         filtered = filter_universe(
             candidates,
             ohlcv_fetcher=get_daily_ohlcv,
+            target_fetcher=get_naver_target_price,
         )
         _universe_cache = filtered
         logger.info("── 유니버스 필터링 완료: %d종목 통과 ──", len(filtered))
@@ -80,7 +81,7 @@ def run_universe_filter():
 
 
 def run_signal_screening():
-    """시그널 스크리닝 (전일 종가 기반 스코어링)."""
+    """시그널 스크리닝 (전일 종가 기반 목표가 순항 스코어링)."""
     try:
         logger.info("── 시그널 스크리닝 시작 ──")
         from app.api.rest import get_daily_ohlcv, get_investor_data
@@ -103,6 +104,7 @@ def run_signal_screening():
         for stock in universe:
             code = stock["code"]
             name = stock.get("name", "")
+            target_info = stock.get("target_info")  # 유니버스 필터에서 이미 조회됨
 
             # 일봉 OHLCV (60일)
             ohlcv = get_daily_ohlcv(code, days=60)
@@ -117,8 +119,12 @@ def run_signal_screening():
             inv_data = get_investor_data(code)
             investor_list = [inv_data] if inv_data else None
 
-            # 스코어링
-            result = score_stock(code, ohlcv, investor_data=investor_list)
+            # 스코어링 (목표가 순항 전략)
+            result = score_stock(
+                code, ohlcv,
+                target_info=target_info,
+                investor_data=investor_list,
+            )
             total_score = result["total_score"]
             indicators = result.get("indicators", {})
 
@@ -127,11 +133,11 @@ def run_signal_screening():
                 today_str, code, name,
                 total_score,
                 result.get("volume_score", 0),
-                result.get("price_score", 0),
-                result.get("supply_bonus", 0),
+                result.get("cruise_score", 0),
+                result.get("supply_score", 0),
                 indicators.get("volume_ratio", 0),
                 indicators.get("atr", 0),
-                indicators.get("close_quality", 0),
+                indicators.get("r2", 0),
             )
 
             # 임계값 이상이면 시그널 저장
@@ -139,8 +145,8 @@ def run_signal_screening():
                 save_signal(
                     code, name, total_score,
                     volume_score=result.get("volume_score", 0),
-                    price_score=result.get("price_score", 0),
-                    supply_score=result.get("supply_bonus", 0),
+                    price_score=result.get("cruise_score", 0),
+                    supply_score=result.get("supply_score", 0),
                     volume_ratio=indicators.get("volume_ratio", 0),
                     atr=indicators.get("atr", 0),
                     status="DETECTED",
@@ -149,18 +155,19 @@ def run_signal_screening():
 
                 # 텔레그램 알림
                 notify_signal(code, name, total_score, {
-                    "volume_score": result.get("volume_score", 0),
-                    "price_score": result.get("price_score", 0),
-                    "supply_score": result.get("supply_bonus", 0),
-                    "volume_ratio": indicators.get("volume_ratio", 0),
+                    "target_score": result.get("target_score", 0),
+                    "cruise_score": result.get("cruise_score", 0),
+                    "supply_score": result.get("supply_score", 0),
+                    "upside_pct": indicators.get("upside_pct", 0),
                 })
 
                 logger.info(
-                    "[SIGNAL] %s %s | 총점 %d (거래량 %d + 가격 %d + 수급 %d)",
+                    "[SIGNAL] %s %s | 총점 %d (목표 %d + 순항 %d + 수급 %d + 거래량 %d)",
                     code, name, total_score,
+                    result.get("target_score", 0),
+                    result.get("cruise_score", 0),
+                    result.get("supply_score", 0),
                     result.get("volume_score", 0),
-                    result.get("price_score", 0),
-                    result.get("supply_bonus", 0),
                 )
 
         logger.info("── 시그널 스크리닝 완료: %d건 감지 ──", signals_found)
@@ -170,16 +177,16 @@ def run_signal_screening():
 
 
 def run_entry_check():
-    """갭 시나리오 판단 + 매수 진입."""
+    """눌림목 진입 판단 + 매수 진입."""
     try:
         if not is_market_open():
             logger.info("장 미개장 → 진입 체크 스킵")
             return
 
-        logger.info("── 갭 시나리오 진입 체크 시작 ──")
+        logger.info("── 눌림목 진입 체크 시작 ──")
         from app.storage.db import get_today_signals, update_signal_status
         from app.api.rest import get_current_price, get_daily_ohlcv
-        from app.screener.indicators import calc_atr, calc_vwap
+        from app.screener.indicators import calc_atr, calc_ma_alignment
         from app.strategy.entry import evaluate_entry
         from app.strategy.portfolio import Portfolio
         from app.strategy.risk import RiskManager
@@ -218,61 +225,43 @@ def run_entry_check():
             current_price = cur["price"]
             prev_close = cur.get("prev_close", 0)
 
-            # ATR 계산
-            ohlcv = get_daily_ohlcv(code, days=20)
+            # 일봉 데이터 (이평선 + ATR 계산용)
+            ohlcv = get_daily_ohlcv(code, days=70)
             if ohlcv:
                 ohlcv.reverse()
                 atr = calc_atr(ohlcv)
+                closes = [d.get("close", 0) for d in ohlcv]
+                ma_info = calc_ma_alignment(closes, short=5, mid=20, long=60)
             else:
                 atr = current_price * 0.02  # fallback: 2%
+                ma_info = None
 
-            # VWAP (전일 일봉 기반 — 당일 데이터로 계산 시 현재가와 동일해짐)
-            if ohlcv and len(ohlcv) >= 2:
-                prev_bar = ohlcv[-2]  # 전일 봉
-                vwap = calc_vwap([{
-                    "high": prev_bar.get("high", prev_close),
-                    "low": prev_bar.get("low", prev_close),
-                    "close": prev_bar.get("close", prev_close),
-                    "volume": prev_bar.get("volume", 1),
-                }])
-            else:
-                vwap = float(prev_close) if prev_close > 0 else float(current_price)
-
-            # 갭 시나리오 판단
+            # 눌림목 진입 판단
             entry_result = evaluate_entry(
                 signal={"code": code, "total_score": score},
                 current_price=current_price,
                 prev_close=prev_close,
                 atr=atr,
-                vwap=vwap,
+                ma_info=ma_info,
             )
 
             action = entry_result["action"]
 
-            if action == "BUY_MARKET":
-                # 즉시 매수
+            if action == "BUY_PULLBACK":
+                # 눌림목 매수
                 quantity = max(1, POSITION_SIZE // current_price)
                 success = portfolio.buy(code, name, current_price, quantity, score, atr)
                 if success:
                     update_signal_status(sig["id"], "BOUGHT")
-                    logger.info("[ENTRY-A] %s %s 매수 %d주 @ %s원",
+                    logger.info("[ENTRY-A] %s %s 눌림목 매수 %d주 @ %s원",
                                 code, name, quantity, f"{current_price:,}")
                 else:
                     update_signal_status(sig["id"], "FILTERED")
 
-            elif action == "BUY_VWAP_PULLBACK":
-                # VWAP 눌림: 현재가가 VWAP 이하면 매수
-                target = entry_result.get("target_price", current_price)
-                if current_price <= target:
-                    quantity = max(1, POSITION_SIZE // current_price)
-                    success = portfolio.buy(code, name, current_price, quantity, score, atr)
-                    if success:
-                        update_signal_status(sig["id"], "BOUGHT")
-                        logger.info("[ENTRY-B] %s %s VWAP 눌림 매수 %d주 @ %s원",
-                                    code, name, quantity, f"{current_price:,}")
-                else:
-                    logger.info("[ENTRY-B] %s VWAP 대기 (현재 %s > 타겟 %s)",
-                                code, f"{current_price:,}", f"{target:,}")
+            elif action == "WAIT":
+                # MA5 조정 대기 — 시그널 유지 (다음 모니터링에서 재체크)
+                logger.info("[ENTRY-B] %s %s 조정 대기 → %s",
+                            code, name, entry_result.get("reason", ""))
 
             elif action in ("SKIP", "INVALIDATE"):
                 update_signal_status(sig["id"], "FILTERED")
@@ -284,18 +273,19 @@ def run_entry_check():
                 logger.info("매수 한도 도달 → 나머지 시그널 스킵")
                 break
 
-        logger.info("── 갭 시나리오 진입 체크 완료 ──")
+        logger.info("── 눌림목 진입 체크 완료 ──")
 
     except Exception:
         logger.exception("진입 체크 중 예외 발생")
 
 
-def _check_vwap_pullback_signals():
-    """시나리오 B (VWAP 풀백 대기) 시그널 재체크 — 1분 모니터링에서 호출."""
+def _check_pullback_signals():
+    """WAIT 상태 시그널 재체크 — MA5 근처 눌림목 대기 시그널을 1분마다 확인."""
     try:
         from app.storage.db import get_today_signals, update_signal_status
         from app.api.rest import get_current_price, get_daily_ohlcv
-        from app.screener.indicators import calc_vwap
+        from app.screener.indicators import calc_atr, calc_ma_alignment
+        from app.strategy.entry import evaluate_entry
         from app.strategy.portfolio import Portfolio
         from app.strategy.risk import RiskManager
         from app.config import POSITION_SIZE
@@ -309,7 +299,6 @@ def _check_vwap_pullback_signals():
             return
 
         signals = get_today_signals()
-        # VWAP 대기 중인 시그널 (status가 아직 DETECTED이고 시나리오 B로 판정된 것)
         pending = [s for s in signals if s.get("status") == "DETECTED"]
         if not pending:
             return
@@ -328,38 +317,36 @@ def _check_vwap_pullback_signals():
             if prev_close <= 0:
                 continue
 
-            # 전일 VWAP 기준 풀백 체크
-            ohlcv = get_daily_ohlcv(code, days=20)
-            if ohlcv:
-                ohlcv.reverse()
-                if len(ohlcv) >= 2:
-                    prev_bar = ohlcv[-2]
-                    vwap = calc_vwap([{
-                        "high": prev_bar.get("high", prev_close),
-                        "low": prev_bar.get("low", prev_close),
-                        "close": prev_bar.get("close", prev_close),
-                        "volume": prev_bar.get("volume", 1),
-                    }])
-                else:
-                    vwap = float(prev_close)
-            else:
+            # 이평선 + ATR 계산
+            ohlcv = get_daily_ohlcv(code, days=70)
+            if not ohlcv:
                 continue
+            ohlcv.reverse()
+            atr = calc_atr(ohlcv)
+            closes = [d.get("close", 0) for d in ohlcv]
+            ma_info = calc_ma_alignment(closes, short=5, mid=20, long=60)
 
-            # 현재가가 VWAP 이하로 눌렸으면 매수
-            if vwap > 0 and current_price <= int(vwap):
+            # 눌림목 재판단
+            entry_result = evaluate_entry(
+                signal={"code": code, "total_score": score},
+                current_price=current_price,
+                prev_close=prev_close,
+                atr=atr,
+                ma_info=ma_info,
+            )
+
+            if entry_result["action"] == "BUY_PULLBACK":
                 quantity = max(1, POSITION_SIZE // current_price)
-                from app.screener.indicators import calc_atr
-                atr = calc_atr(ohlcv) if ohlcv else current_price * 0.02
                 success = portfolio.buy(code, name, current_price, quantity, score, atr)
                 if success:
                     update_signal_status(sig["id"], "BOUGHT")
-                    logger.info("[VWAP-PULLBACK] %s %s 눌림 매수 %d주 @ %s원",
+                    logger.info("[PULLBACK] %s %s 눌림목 매수 %d주 @ %s원",
                                 code, name, quantity, f"{current_price:,}")
                     if not portfolio.can_buy():
                         break
 
     except Exception:
-        logger.exception("VWAP 풀백 재체크 중 예외 발생")
+        logger.exception("눌림목 재체크 중 예외 발생")
 
 
 def run_position_monitor():
@@ -375,8 +362,8 @@ def run_position_monitor():
         from app.strategy.risk import RiskManager
         from app.storage.db import update_position
 
-        # 시나리오 B 재체크 (매분 실행)
-        _check_vwap_pullback_signals()
+        # 눌림목 대기 시그널 재체크 (매분 실행)
+        _check_pullback_signals()
 
         portfolio = Portfolio.instance()
         risk = RiskManager.instance()
@@ -444,9 +431,10 @@ def run_eod_screening():
     """종가 기반 시그널 스크리닝 (15:20) — 다음 날 진입 후보."""
     try:
         logger.info("── EOD 스크리닝 시작 ──")
-        # EOD 스크리닝은 run_signal_screening과 동일 로직
-        # 유니버스를 다시 가져와서 종가 기반으로 스코어링
-        from app.api.rest import get_volume_rank, get_daily_ohlcv, get_investor_data
+        from app.api.rest import (
+            get_volume_rank, get_daily_ohlcv, get_investor_data,
+            get_naver_target_price,
+        )
         from app.screener.universe import filter_universe
         from app.screener.scorer import score_stock
         from app.storage.db import save_signal, save_score_history
@@ -460,7 +448,11 @@ def run_eod_screening():
             logger.info("EOD: 후보 종목 없음")
             return
 
-        filtered = filter_universe(candidates, ohlcv_fetcher=get_daily_ohlcv)
+        filtered = filter_universe(
+            candidates,
+            ohlcv_fetcher=get_daily_ohlcv,
+            target_fetcher=get_naver_target_price,
+        )
         if not filtered:
             logger.info("EOD: 유니버스 필터 통과 종목 없음")
             return
@@ -471,6 +463,7 @@ def run_eod_screening():
         for stock in filtered:
             code = stock["code"]
             name = stock.get("name", "")
+            target_info = stock.get("target_info")
 
             ohlcv = get_daily_ohlcv(code, days=60)
             if not ohlcv or len(ohlcv) < 20:
@@ -480,26 +473,30 @@ def run_eod_screening():
             inv_data = get_investor_data(code)
             investor_list = [inv_data] if inv_data else None
 
-            result = score_stock(code, ohlcv, investor_data=investor_list)
+            result = score_stock(
+                code, ohlcv,
+                target_info=target_info,
+                investor_data=investor_list,
+            )
             total_score = result["total_score"]
             indicators = result.get("indicators", {})
 
             save_score_history(
                 today_str, code, name, total_score,
                 result.get("volume_score", 0),
-                result.get("price_score", 0),
-                result.get("supply_bonus", 0),
+                result.get("cruise_score", 0),
+                result.get("supply_score", 0),
                 indicators.get("volume_ratio", 0),
                 indicators.get("atr", 0),
-                indicators.get("close_quality", 0),
+                indicators.get("r2", 0),
             )
 
             if total_score >= threshold:
                 save_signal(
                     code, name, total_score,
                     volume_score=result.get("volume_score", 0),
-                    price_score=result.get("price_score", 0),
-                    supply_score=result.get("supply_bonus", 0),
+                    price_score=result.get("cruise_score", 0),
+                    supply_score=result.get("supply_score", 0),
                     volume_ratio=indicators.get("volume_ratio", 0),
                     atr=indicators.get("atr", 0),
                     status="DETECTED",
@@ -507,10 +504,10 @@ def run_eod_screening():
                 signals_found += 1
 
                 notify_signal(code, name, total_score, {
-                    "volume_score": result.get("volume_score", 0),
-                    "price_score": result.get("price_score", 0),
-                    "supply_score": result.get("supply_bonus", 0),
-                    "volume_ratio": indicators.get("volume_ratio", 0),
+                    "target_score": result.get("target_score", 0),
+                    "cruise_score": result.get("cruise_score", 0),
+                    "supply_score": result.get("supply_score", 0),
+                    "upside_pct": indicators.get("upside_pct", 0),
                 })
 
         logger.info("── EOD 스크리닝 완료: %d건 감지 ──", signals_found)
@@ -661,12 +658,12 @@ def main():
         misfire_grace_time=300,
     )
 
-    # 09:00: 갭 시나리오 진입 체크
+    # 09:00: 눌림목 진입 체크
     scheduler.add_job(
         run_entry_check,
         CronTrigger(day_of_week="mon-fri", hour=9, minute=0, timezone="Asia/Seoul"),
         id="entry_check",
-        name="갭 시나리오 진입 체크",
+        name="눌림목 진입 체크",
         misfire_grace_time=300,
     )
 

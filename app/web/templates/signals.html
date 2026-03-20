@@ -28,12 +28,12 @@
                     <th>종목코드</th>
                     <th>종목명</th>
                     <th>총점</th>
+                    <th>목표가점수</th>
+                    <th>순항도</th>
+                    <th>수급점수</th>
                     <th>거래량점수</th>
-                    <th>가격점수</th>
-                    <th>수급보너스</th>
-                    <th>Volume Ratio</th>
-                    <th>ATR</th>
-                    <th>종가위치</th>
+                    <th>상승여력</th>
+                    <th>R²</th>
                     <th>상태</th>
                 </tr>
             </thead>
@@ -48,12 +48,12 @@
                             {{ "%.0f"|format(s.score) }}
                         </span>
                     </td>
-                    <td>{{ "%.1f"|format(s.volume_score) }}</td>
+                    <td>{{ "%.1f"|format(s.get('volume_score', 0) or 0) }}</td>
                     <td>{{ "%.1f"|format(s.price_score) }}</td>
                     <td>{{ "%.1f"|format(s.get('supply_score', 0) or 0) }}</td>
-                    <td>{{ "%.2f"|format(s.get('volume_ratio', 0) or 0) }}x</td>
-                    <td>{{ "%.1f"|format(s.get('atr', 0) or 0) }}</td>
+                    <td>{{ "%.1f"|format(s.get('volume_score', 0) or 0) }}</td>
                     <td>{{ "%.1f"|format((s.get('close_vs_high', 0) or 0) * 100) }}%</td>
+                    <td>{{ "%.2f"|format(s.get('atr', 0) or 0) }}</td>
                     <td>
                         <span class="badge {% if s.status == 'BOUGHT' %}badge-buy{% elif s.status == 'EXPIRED' %}badge-negative{% elif s.status == 'FILTERED' %}badge-neutral{% else %}badge-positive{% endif %}">
                             {{ s.status }}

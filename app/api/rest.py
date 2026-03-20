@@ -472,3 +472,103 @@ def get_market_cap(code: str) -> int:
     """
     info = get_current_price(code)
     return info.get("market_cap", 0)
+
+
+# ══════════════════════════════════════════════════════════
+# 네이버 금융 컨센서스 목표가
+# ══════════════════════════════════════════════════════════
+
+def get_naver_target_price(code: str) -> dict:
+    """네이버 금융에서 증권사 컨센서스 목표가를 크롤링한다.
+
+    네이버 금융 종목 분석 페이지에서 목표가 정보를 가져옴.
+
+    Returns:
+        {
+            "target_price": int,       # 컨센서스 목표가 (원)
+            "current_price": int,      # 현재가 (원)
+            "upside_pct": float,       # 상승여력 (%)
+            "analyst_count": int,      # 분석 증권사 수
+            "consensus": str,          # 투자의견 (매수/중립/매도 등)
+        }
+        에러 시 빈 dict.
+    """
+    try:
+        # 네이버 금융 종목 분석 API (모바일)
+        resp = requests.get(
+            f"https://m.stock.naver.com/api/stock/{code}/integration",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        # dealInfo 섹션에서 목표가 추출
+        deal_info = data.get("dealInfo", {})
+
+        target_price = 0
+        analyst_count = 0
+        consensus = ""
+
+        # 컨센서스 정보
+        consensus_info = data.get("consensusInfo", {})
+        if consensus_info:
+            target_str = str(consensus_info.get("targetPrice", "0")).replace(",", "")
+            target_price = int(float(target_str)) if target_str and target_str != "0" else 0
+            analyst_count = int(consensus_info.get("analyistCnt", 0) or 0)
+            consensus = consensus_info.get("investmentOpinion", "")
+
+        if target_price <= 0:
+            logger.debug("목표가 없음: %s", code)
+            return {}
+
+        # 현재가
+        stock_info = data.get("stockEndPrice") or data.get("closePrice", 0)
+        current_price_str = str(stock_info).replace(",", "")
+        current_price = int(float(current_price_str)) if current_price_str else 0
+
+        if current_price <= 0:
+            # 별도 현재가 조회
+            price_info = get_current_price(code)
+            current_price = price_info.get("price", 0)
+
+        upside_pct = 0.0
+        if current_price > 0:
+            upside_pct = round((target_price - current_price) / current_price * 100, 2)
+
+        result = {
+            "target_price": target_price,
+            "current_price": current_price,
+            "upside_pct": upside_pct,
+            "analyst_count": analyst_count,
+            "consensus": consensus,
+        }
+
+        logger.debug(
+            "목표가 %s: 현재가 %s → 목표가 %s (%+.1f%%)",
+            code, f"{current_price:,}", f"{target_price:,}", upside_pct,
+        )
+        return result
+
+    except Exception as exc:
+        logger.warning("네이버 목표가 조회 실패 [%s]: %s", code, exc)
+        return {}
+
+
+def get_naver_target_prices_bulk(codes: list[str]) -> dict[str, dict]:
+    """여러 종목의 목표가를 일괄 조회한다.
+
+    Rate limit을 고려하여 0.1초 간격으로 조회.
+
+    Returns:
+        {code: {target_price, current_price, upside_pct, analyst_count, consensus}, ...}
+    """
+    results = {}
+    for code in codes:
+        info = get_naver_target_price(code)
+        if info:
+            results[code] = info
+        time.sleep(0.1)  # rate limit
+
+    logger.info("목표가 일괄조회: %d/%d 성공", len(results), len(codes))
+    return results

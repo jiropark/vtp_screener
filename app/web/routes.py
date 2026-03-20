@@ -194,17 +194,24 @@ def settings_page():
             ("SCORE_THRESHOLD", "매수 시그널 최소 점수", get_param("SCORE_THRESHOLD", 60)),
             ("MIN_MARKET_CAP", "최소 시가총액", get_param("MIN_MARKET_CAP", 100_000_000_000)),
             ("MIN_AVG_TRADE_AMOUNT", "최소 평균 거래대금", get_param("MIN_AVG_TRADE_AMOUNT", 1_000_000_000)),
-            ("VOLUME_PERCENTILE_THRESHOLD", "거래량 백분위 기준(%)", get_param("VOLUME_PERCENTILE_THRESHOLD", 90)),
+        ],
+        "목표가 순항": [
+            ("TARGET_UPSIDE_MIN", "최소 상승여력(%)", get_param("TARGET_UPSIDE_MIN", 10.0)),
+            ("TARGET_UPSIDE_MAX", "최대 상승여력(%)", get_param("TARGET_UPSIDE_MAX", 60.0)),
+            ("TARGET_UPSIDE_SWEET_MIN", "이상적 구간 시작(%)", get_param("TARGET_UPSIDE_SWEET_MIN", 15.0)),
+            ("TARGET_UPSIDE_SWEET_MAX", "이상적 구간 끝(%)", get_param("TARGET_UPSIDE_SWEET_MAX", 40.0)),
+            ("CRUISE_R2_MIN", "최소 R² (추세 일관성)", get_param("CRUISE_R2_MIN", 0.6)),
+            ("CRUISE_DRAWDOWN_MAX", "최대 고점 대비 낙폭(%)", get_param("CRUISE_DRAWDOWN_MAX", 5.0)),
+            ("PULLBACK_MAX_DIST_PCT", "MA5 최대 괴리율(%)", get_param("PULLBACK_MAX_DIST_PCT", 2.0)),
         ],
         "손절 관리": [
             ("ATR_STOP_MULTIPLIER", "ATR 손절 배수", get_param("ATR_STOP_MULTIPLIER", 1.2)),
             ("ATR_TRAILING_MULTIPLIER", "트레일링 스탑 ATR 배수", get_param("ATR_TRAILING_MULTIPLIER", 1.2)),
-            ("MAX_HOLD_DAYS", "최대 보유일수", get_param("MAX_HOLD_DAYS", 3)),
+            ("MAX_HOLD_DAYS", "최대 보유일수", get_param("MAX_HOLD_DAYS", 5)),
         ],
         "익절 관리": [
             ("ATR_TAKE_PROFIT_1", "1차 익절 ATR 배수", get_param("ATR_TAKE_PROFIT_1", 2.0)),
             ("ATR_TAKE_PROFIT_2", "2차 익절 ATR 배수", get_param("ATR_TAKE_PROFIT_2", 3.0)),
-            ("CLOSE_POSITION_QUALITY", "분할 익절 최소 품질", get_param("CLOSE_POSITION_QUALITY", 0.8)),
         ],
         "리스크 관리": [
             ("MAX_POSITIONS", "최대 동시 보유 종목수", get_param("MAX_POSITIONS", 5)),
@@ -212,10 +219,6 @@ def settings_page():
             ("DAILY_LOSS_LIMIT", "일일 최대 손실률(%)", get_param("DAILY_LOSS_LIMIT", -2.0)),
             ("WEEKLY_LOSS_LIMIT", "주간 최대 손실률(%)", get_param("WEEKLY_LOSS_LIMIT", -5.0)),
             ("CONSECUTIVE_LOSS_COOLDOWN", "연속 손실 쿨다운 횟수", get_param("CONSECUTIVE_LOSS_COOLDOWN", 3)),
-        ],
-        "갭 시나리오": [
-            ("GAP_NORMAL_ATR", "일반 갭 ATR 비율", get_param("GAP_NORMAL_ATR", 0.8)),
-            ("GAP_PULLBACK_ATR", "풀백 갭 ATR 비율", get_param("GAP_PULLBACK_ATR", 1.5)),
         ],
     }
 

@@ -43,7 +43,7 @@ ATR_TAKE_PROFIT_2 = 3.0              # 2차 익절: 진입가 + ATR × 배수
 ATR_TRAILING_MULTIPLIER = 1.2        # 트레일링 스탑: 최고가 - ATR × 배수
 
 # ── 리스크 관리 ───────────────────────────────────────────
-MAX_HOLD_DAYS = 3                     # 최대 보유일수
+MAX_HOLD_DAYS = 5                     # 최대 보유일수 (순항 전략)
 DAILY_LOSS_LIMIT = -2.0              # 일일 최대 손실률 (%)
 WEEKLY_LOSS_LIMIT = -5.0             # 주간 최대 손실률 (%)
 CONSECUTIVE_LOSS_COOLDOWN = 3         # 연속 손실 N회 시 쿨다운 진입
@@ -51,27 +51,31 @@ CONSECUTIVE_LOSS_COOLDOWN = 3         # 연속 손실 N회 시 쿨다운 진입
 # ── 스코어링 ──────────────────────────────────────────────
 SCORE_THRESHOLD = 60                  # 매수 시그널 최소 점수 (백테스트로 튜닝)
 
-# ── 갭 시나리오 ───────────────────────────────────────────
-GAP_NORMAL_ATR = 0.8                  # 일반 갭: ATR 대비 비율
-GAP_PULLBACK_ATR = 1.5               # 풀백 갭: ATR 대비 비율
+# ── 목표가 순항 전략 ──────────────────────────────────────
+# 목표가 괴리율 (현재가 대비 목표가 상승여력)
+TARGET_UPSIDE_MIN = 10.0              # 최소 상승여력 (%)
+TARGET_UPSIDE_MAX = 60.0              # 최대 상승여력 (%) - 너무 높으면 비현실적
+TARGET_UPSIDE_SWEET_MIN = 15.0        # 이상적 구간 시작 (%)
+TARGET_UPSIDE_SWEET_MAX = 40.0        # 이상적 구간 끝 (%)
+
+# 순항도 지표
+CRUISE_R2_MIN = 0.6                   # 선형회귀 R² 최소값 (추세 일관성)
+CRUISE_MA_SHORT = 5                   # 단기 이평
+CRUISE_MA_MID = 20                    # 중기 이평
+CRUISE_MA_LONG = 60                   # 장기 이평
+CRUISE_DRAWDOWN_MAX = 5.0             # 최근 고점 대비 최대 낙폭 (%)
+
+# 진입 (눌림목)
+PULLBACK_MA_TOUCH = 5                 # 단기 이평 터치 시 진입
+PULLBACK_MAX_DIST_PCT = 2.0           # 이평선 대비 최대 괴리 (%)
+
+# 수급 (10일 기준)
+SUPPLY_LOOKBACK_DAYS = 10             # 수급 판단 기간
+SUPPLY_NET_BUY_RATIO = 0.5            # 순매수 일수 비율 (50% 이상이면 우호적)
 
 # ── 필터링 기준 ───────────────────────────────────────────
 MIN_MARKET_CAP = 100_000_000_000     # 최소 시가총액 (1000억)
 MIN_AVG_TRADE_AMOUNT = 1_000_000_000  # 최소 평균 거래대금 (10억)
-
-# ── 거래량 분석 ───────────────────────────────────────────
-VOLUME_PERCENTILE_DAYS = 60           # 거래량 백분위 계산 기간 (일)
-VOLUME_PERCENTILE_THRESHOLD = 90      # 거래량 백분위 기준 (%)
-
-# ── 볼린저 밴드 ───────────────────────────────────────────
-BB_PERIOD = 20                        # 볼린저 밴드 기간
-BB_STD = 2                            # 볼린저 밴드 표준편차 배수
-
-# ── VWAP ──────────────────────────────────────────────────
-VWAP_PREMIUM = 1.02                   # VWAP 대비 최대 프리미엄 (2%)
-
-# ── 청산 품질 ─────────────────────────────────────────────
-CLOSE_POSITION_QUALITY = 0.8         # 분할 익절 시 최소 품질 점수
 
 # ── 웹 서버 ───────────────────────────────────────────────
 FLASK_PORT = int(os.getenv("FLASK_PORT", "8092"))

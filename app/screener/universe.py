@@ -6,6 +6,7 @@
   3. 관리종목/정리매매/상하한가 제외
   4. 대차잔고 급증 (20일 대비 50%↑) 제외
   5. 외국인+기관 동시 3일 연속 순매도 제외 (supply filter)
+  6. 목표가 존재 및 최소 상승여력 10% 이상
 """
 
 import logging
@@ -30,6 +31,7 @@ def filter_universe(
     ohlcv_fetcher=None,
     investor_fetcher=None,
     lending_fetcher=None,
+    target_fetcher=None,
 ) -> list[dict]:
     """전체 종목 리스트에서 스크리닝 유니버스를 필터링한다.
 
@@ -48,6 +50,8 @@ def filter_universe(
         최근 5일 이상 투자자별 순매수 반환.
     lending_fetcher : callable, optional
         code -> dict(current, avg_20d) 대차잔고 정보 반환.
+    target_fetcher : callable, optional
+        code -> dict(target_price, upside_pct, ...) 목표가 정보 반환.
 
     Returns
     -------
@@ -62,6 +66,7 @@ def filter_universe(
         "trade_amount": 0,
         "lending_surge": 0,
         "supply_filter": 0,
+        "no_target": 0,
     }
 
     for stock in all_stocks:
@@ -102,14 +107,21 @@ def filter_universe(
             logger.debug("수급 악화 제외: %s %s", code, name)
             continue
 
+        # ── 7) 목표가 존재 및 최소 상승여력 필터 ──
+        target_info = _get_target_info(code, target_fetcher)
+        if not target_info or target_info.get("upside_pct", 0) < 10:
+            excluded_counts["no_target"] += 1
+            continue
+
         # 필터 통과
         stock_copy = dict(stock)
         stock_copy["avg_trade_amount_20d"] = avg_trade_amount
+        stock_copy["target_info"] = target_info
         passed.append(stock_copy)
 
     logger.info(
         "유니버스 필터링: %d/%d 통과 "
-        "(시총 %d, 관리/정리 %d, 상하한 %d, 거래대금 %d, 대차 %d, 수급 %d 제외)",
+        "(시총 %d, 관리/정리 %d, 상하한 %d, 거래대금 %d, 대차 %d, 수급 %d, 목표가 %d 제외)",
         len(passed),
         len(all_stocks),
         excluded_counts["market_cap"],
@@ -118,12 +130,24 @@ def filter_universe(
         excluded_counts["trade_amount"],
         excluded_counts["lending_surge"],
         excluded_counts["supply_filter"],
+        excluded_counts["no_target"],
     )
 
     return passed
 
 
 # ── 내부 헬퍼 ─────────────────────────────────────────────────
+
+
+def _get_target_info(code: str, target_fetcher) -> dict:
+    """목표가 정보를 가져온다."""
+    if target_fetcher is None:
+        return {}
+    try:
+        return target_fetcher(code) or {}
+    except Exception:
+        logger.debug("목표가 조회 실패: %s", code)
+        return {}
 
 
 def _calc_avg_trade_amount(
